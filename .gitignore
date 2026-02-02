@@ -1,0 +1,24 @@
+# ================================
+# Terraform
+# ================================
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform plan files (never commit)
+tfplan
+tfplan.*
+plan.json
+
+# Terraform variable files (secrets)
+*.tfvars
+*.tfvars.json
+
+# ================================
+# Terraform CLI config
+# =======

@@ -1,0 +1,102 @@
+name: Terraform GCP Safe Deploy (Drift Guard)
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    # 🔐 Terraform variables from GitHub Secrets
+    env:
+      TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+      TF_VAR_region: us-central1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Terraform Init
+        working-directory: envs/prod
+        run: terraform init
+
+      - name: Terraform Format Check
+        working-directory: envs/prod
+        run: terraform fmt -check
+
+      - name: Terraform Validate
+        working-directory: envs/prod
+        run: terraform validate
+
+      # -----------------------------
+      # PLAN (capture exit code)
+      # -----------------------------
+      - name: Terraform Plan
+        id: plan
+        working-directory: envs/prod
+        run: |
+          terraform plan -detailed-exitcode -out=tfplan
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Fail on Plan Error
+        if: steps.plan.outputs.exitcode == '1'
+        run: |
+          echo "❌ Terraform plan failed"
+          exit 1
+
+      # -----------------------------------------
+      # DETECT DRIFT (update or delete only)
+      # -----------------------------------------
+      - name: Detect Drift
+        id: drift
+        working-directory: envs/prod
+        run: |
+          terraform show -json tfplan > plan.json
+
+          DRIFT_COUNT=$(jq '[.resource_changes[]
+            | select(.change.actions | index("update") or index("delete"))
+          ] | length' plan.json)
+
+          echo "drift_count=$DRIFT_COUNT" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------
+      # FAIL IF DRIFT EXISTS
+      # -----------------------------------------
+      - name: Block Apply on Drift
+        if: steps.drift.outputs.drift_count != '0'
+        run: |
+          echo "❌ Drift detected (manual changes in infra)."
+          echo "❌ Deployment blocked to protect running resources."
+          exit 1
+
+      # -----------------------------------------
+      # APPLY (ONLY push to main)
+      # -----------------------------------------
+      - name: Terraform Apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: envs/prod
+        run: terraform apply -auto-approve tfplan
