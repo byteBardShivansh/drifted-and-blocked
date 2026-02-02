@@ -1,6 +1,6 @@
 terraform {
   backend "gcs" {
-    bucket  = "my-tf-state-bucket"
-    prefix  = "prod/vm"
+    bucket  = "prod-vms"
+    prefix  = "envs/prod"
   }
 }
